@@ -3,16 +3,132 @@ title: "Pracitcal Machine Learning Course Project"
 author: "Brian M. Baczyk"
 date: "April 29, 2017"
 output: html_document
+
+references:
+- type: article-journal
+  id: SIGCHI2013
+  author:
+  - family: Velloso
+    given: E.
+  - family: Bulling
+    given: A.
+  - family: Gellersen
+    given: H
+  - family: Ugulino
+    given: W
+  - family: Fuks
+    given: H
+  title: Qualitative Activity Recogonition of Weight Lifting Exercises
+  container-title: Proceedings of 4th International Conference in Cooperation with SIGCHI (Augemented Human '13)
+  publisher: ACM SIGCHI
+  issued:
+    year: 2013
+  URL: http://groupware.les.inf.puc-rio.br/har#ixzz4fgsI6fbT
+
+- type: book
+  id: ESL
+  author:
+  - family: Hastie
+    given: Trevor
+  - family: Tibshirani
+    given: Robert
+  - family: Friedman
+    given: Jerome
+  title: The Elements of Statisical Learning 2nd Edition
+  publisher: Springer
+  issued:
+    year: 2008
 ---
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+#Executive Summary
+Exercise is generally considered to be a positive for the quality of human life. Normally, it is the quantity of exercise that is measured.
+However, the quality of the exercise is very important also.
+Performing an exercise correctly reduces the risk of injury and improves the effectivenes of the exercise. The data used in this study
+uses measurements from Razor interial measurement units to quanitify both proper exercise style as well as several common errors in a common exercise, the Unilateral Dumbbell Biceps Curl. Six male participants with little weight lifting experience performed 10 repetitions of the proper form of the exercise and five common errors in form.[@SIGCHI2013]  These six variations are captured in the classe variable and will be the factor predicted in the modeling below
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+This paper will review the effectivess of using the sensor data to determine improper form. Effective predicton of poor form could lead to
+providing an individual with near real time feedback on an exercise, allowing for adjustments in form during the exercise. While this is
+often done with a human coach nearby, this approach is costly and not available to all who need it.  The sensors used in this study provide measurements of acceleration, rotation, direction, and the Euler angles (pitch, yaw, and roll). 
 
-```{r}
+The predictions were generated using a random forest technique and resulted in a 99.4% accuracy rate against the testing dataset. The model also was used against the twenty test cases specfied for the final quiz and resulted in a 100% accuracy rate against this small sample.
+
+#Data Processing
+The data set used for training the predictive model can be found at [Training Data](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv) and the data used for testing the predictive model can be found at [Test Data](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv). To prepare this data set for analysis, there are several steps required, including create a training and validation subset and removing unnessary columns. 
+
+First, the intital training data set is split into a training and vaildation dataset (75% of the rows are used for training). Next, any columns having a zero or near zero variance (using nearZeroVar() ) in the newly created training subset are removed from all datasets (training, validation and testing). Lastly, several columns are predominantly NA. These columns are idenitfied in the training data set and then removed from all three dataset. This leaves 52 predictors from the original 160.
+
+The last check will be to address any predictors that are highly correlated with each other by generating a correlation matix and usinf findCorrelation(). Highly correlated predictors indicate that multiocollinearity may be an issue. This can lead to poor performance in linear models and difficulty in interpreting other models. Also, if two predictors are highly correlated, they may be measuring the same factor. For this analysis we will identify highly correlated preditors in the training data set and remove them from the analysis in all datasets. This results in 46 predictors remaining to determine the class of the exercise repetition (A=proper form, B-E specific improper forms).
+
+After cleaning up the data set, the tableplot() function from the tabplot package is used to visualize the predictors and the class being predicted. The figure below shows the table plot. The last column is the outcome, and it appears that there are useful patterns in the data by outcome.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+# To reduce processing time, results will be cached
+knitr::opts_chunk$set(cache=TRUE)
+
+require(caret)
+
+setwd("~/practicalmachinelearning")
+df_pml_training<-read.csv("pml-training.csv", na.strings = c("", "#DIV/0!", "NA"),
+                          colClasses = c(X="character", user_name="factor",new_window="character",classe="factor",
+                                         cvtd_timestamp = "character", "numeric"))
+df_pml_testing<-read.csv("pml-testing.csv", na.strings = c("", "#DIV/0!", "NA"),
+                         colClasses = c(X="character", user_name="factor", new_window="character",
+                                        problem_id="character", cvtd_timestamp = "character", "numeric"))
+## Create train & test data sets from original training set
+set.seed(31456)
+in_train <- createDataPartition(df_pml_training$classe, p = 3/4, list = FALSE)
+df_trainPML <- df_pml_training[in_train,]
+df_testPML <- df_pml_training[-in_train,]
+## Identify predictors with zero or near zero variance. These columns will be removed.
+x2<-nearZeroVar(df_trainPML)
+## Also remove other columns not used in the analysis (user name, time and date, and window)
+x2<-c(x2,1,2,3,4,5,7)
+df_trainPML<-df_trainPML[,-x2]
+df_testPML<-df_testPML[,-x2]
+df_pml_testing<-df_pml_testing[,-x2]
+
+## Several values are predominantly NA. Identify these columns and remove them from the set of predictors
+xNA<-colMeans(is.na(df_trainPML))==0
+df_trainPML<-df_trainPML[,xNA]
+df_testPML<-df_testPML[,xNA]
+names(xNA) [118]<-"promblem_id"
+df_pml_testing<-df_pml_testing[,xNA]
+#Identify highly correlated predictors and remove those to improve model interpretation.
+#Skipping the last column classe as it is non-numeric and the value we will be predicting
+cor_train<-cor(df_trainPML[,-53])
+xCorr<-findCorrelation(cor_train)
+df_trainPML<-df_trainPML[,-xCorr]
+df_testPML<-df_testPML[,-xCorr]
+df_pml_testing<-df_pml_testing[,-xCorr]
+library(tabplot)
+tableplot(df_trainPML, sortCol = classe)
+```
+
+# Prediction
+
+In order to predict the values of classe (the type of exercise), the randomForest model from the randomForest package is used. Cross validation is implicit in the model. Each tree is bootstrapped from the training data using a proportion of the data. The randomForest model is used to predict classe from the reamining predictors in the data frame (classe ~ .). The number of trees grown is 500 and the option to assess predictor importance is specified. Below the results of the model fitting show an out of bag error estimate of 0.5%.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+library(randomForest)
+pml.rf<-randomForest(classe ~ ., df_trainPML, importance=TRUE, proximity=TRUE)
+pml.rf
+```
+The confusion matrix indicates a model accruacy of 99.4% when fitting the testing dataset. The kappa statistic which is a measure of agreement, is also quite high at 99.2. Finally, the relative importance, using a mean decrease in accuracy measure, of the predictors is shown using varImpPlot().This gives us some insight into how the model is using the predictors and which have the greatest impact on the prediction. The importance measure uses out-of-bag (OOB) randomization which tends to spread importance more uniformly than a GINI statistic. [@ESL] p.594
+
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+
+pred_testPML<-predict(pml.rf,df_testPML)
+confusionMatrix(pred_testPML, df_testPML$classe)
+varImpPlot(pml.rf, type = 1)
+#
+# Run predictions
+#
+#predict(pml.rf,df_pml_testing)
 
 ```
 
+# References
 
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
